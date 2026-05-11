@@ -96,6 +96,20 @@ nav { padding: 1rem 0.75rem; flex: 1; }
   font-size: 11px;
   color: var(--muted);
 }
+  <nav>
+      <button class="nav-item active" onclick="showTab('log')" id="nav-log">
+        <span class="nav-icon">◉</span><span>Log Session</span>
+      </button>
+      <button class="nav-item" onclick="showTab('callers')" id="nav-callers">
+        <span class="nav-icon">◈</span><span>Callers</span>
+      </button>
+      <button class="nav-item" onclick="showTab('dashboard')" id="nav-dashboard">
+        <span class="nav-icon">◧</span><span>Dashboard</span>
+      </button>
+      <button class="nav-item" onclick="showTab('reports')" id="nav-reports">
+        <span class="nav-icon">📊</span><span>Agent Reports</span>
+      </button>
+    </nav>
 
 /* TOPBAR */
 .topbar {
@@ -712,7 +726,138 @@ function fmtMins(m) {
   if (m < 60) return m + 'm';
   return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
 }
+  <div class="section" id="tab-reports">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Agent Reports</div>
+          <div class="page-sub">View daily, weekly, and monthly stats per caller</div>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="form-row">
+          <label class="form-label">Agent</label>
+          <select id="report-caller-select" style="flex:1; max-width: 250px;" onchange="renderAgentReport()">
+            <option value="">— select agent —</option>
+          </select>
+          
+          <label class="form-label" style="margin-left: 1rem;">View</label>
+          <select id="report-timeframe-select" onchange="renderAgentReport()">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+          </select>
+        </div>
+      </div>
 
+      <div id="report-content">
+        <div class="empty">
+          <div class="empty-icon">📊</div>
+          <div>Select an agent above to view their performance breakdown</div>
+        </div>
+      </div>
+    </div>
+  function render() {
+  renderCallerSelect();
+  renderCallersList();
+  renderReportCallerSelect(); // ADD THIS LINE
+}
+
+function showTab(t) {
+  // ADD 'reports' TO THIS ARRAY
+  ['log','callers','dashboard', 'reports'].forEach(name => {
+    document.getElementById('tab-'+name).classList.toggle('active', name===t);
+    document.getElementById('nav-'+name).classList.toggle('active', name===t);
+  });
+  if (t === 'dashboard') renderDashboard();
+  if (t === 'reports') renderAgentReport(); // ADD THIS LINE
+}
+  // Populates the dropdown in the Reports tab
+function renderReportCallerSelect() {
+  const sel = document.getElementById('report-caller-select');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">— select agent —</option>';
+  Object.keys(state.callers).forEach(id => {
+    const o = document.createElement('option');
+    o.value = id; o.textContent = state.callers[id].name;
+    if (id === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+// Generates the daily/weekly/monthly tables
+function renderAgentReport() {
+  const el = document.getElementById('report-content');
+  const callerId = document.getElementById('report-caller-select').value;
+  const timeframe = document.getElementById('report-timeframe-select').value;
+
+  if (!callerId) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">📊</div><div>Select an agent above to view their performance breakdown</div></div>';
+    return;
+  }
+
+  const sessions = state.sessions.filter(s => s.callerId === callerId);
+  if (!sessions.length) {
+    el.innerHTML = '<div class="empty"><div class="empty-icon">◈</div><div>No sessions logged for this agent yet.</div></div>';
+    return;
+  }
+
+  // Group the data by the selected timeframe
+  const groups = {};
+  
+  sessions.forEach(s => {
+    const d = new Date(s.start);
+    let key = '';
+    let sortKey = 0; 
+    
+    if (timeframe === 'daily') {
+      key = d.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'});
+      sortKey = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    } else if (timeframe === 'weekly') {
+      // Find the Monday of this week
+      const day = d.getDay() || 7; 
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - day + 1);
+      key = 'Week of ' + monday.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'});
+      sortKey = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate()).getTime();
+    } else if (timeframe === 'monthly') {
+      key = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+      sortKey = new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+    }
+
+    if (!groups[key]) {
+      groups[key] = { key, sortKey, calls: 0, leads: 0, duration: 0, count: 0 };
+    }
+    groups[key].calls += s.calls;
+    groups[key].leads += s.leads;
+    groups[key].duration += s.durationMins;
+    groups[key].count += 1;
+  });
+
+  // Sort groups chronologically (newest first)
+  const sortedGroups = Object.values(groups).sort((a,b) => b.sortKey - a.sortKey);
+
+  let html = `<div class="card">
+    <div class="card-title">${timeframe.toUpperCase()} BREAKDOWN</div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Period</th><th>Sessions</th><th>Time</th><th>Calls</th><th>Leads</th><th>Conv %</th></tr></thead>
+      <tbody>`;
+
+  sortedGroups.forEach(g => {
+    const conv = g.calls ? Math.round((g.leads / g.calls) * 100) : 0;
+    html += `<tr>
+      <td style="font-weight:600">${g.key}</td>
+      <td style="color:var(--muted);font-family:var(--mono)">${g.count}</td>
+      <td style="font-family:var(--mono)">${fmtMins(g.duration)}</td>
+      <td style="font-family:var(--mono)">${g.calls}</td>
+      <td style="font-family:var(--mono);color:var(--accent);font-weight:600">${g.leads}</td>
+      <td><span class="badge ${conv>=20?'green':conv>=10?'warn':'red'}">${conv}%</span></td>
+    </tr>`;
+  });
+
+  html += `</tbody></table></div></div>`;
+  el.innerHTML = html;
+}
 load();
 </script>
 </body>
